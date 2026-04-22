@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="initial-scale=1, maximum-scale=1, user-scalable=no">
+    <title>Geosceneonline 地图应用</title>
+    <link rel="stylesheet" href="https://js.arcgis.com/4.27/esri/themes/light/main.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            height: 100vh;
+            overflow: hidden;
+        }
+        /* 三区域布局 */
+        .app-container {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+        /* 页眉 */
+        .app-header {
+            background: linear-gradient(135deg, #1a3c5c 0%, #2c5a7a 100%);
+            color: white;
+            padding: 12px 24px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            flex-shrink: 0;
+        }
+        .app-header h1 { font-size: 1.5rem; margin-bottom: 4px; }
+        .app-header p { font-size: 0.85rem; opacity: 0.85; }
+        /* 地图区域 + 底图库区域 水平布局 */
+        .main-content {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+        .map-container {
+            flex: 3;
+            position: relative;
+            background: #f0f2f5;
+        }
+        #viewDiv {
+            width: 100%;
+            height: 100%;
+        }
+        .basemap-container {
+            flex: 1;
+            background: #ffffff;
+            border-left: 1px solid #e0e0e0;
+            padding: 16px;
+            overflow-y: auto;
+            box-shadow: -2px 0 8px rgba(0,0,0,0.05);
+        }
+        .basemap-container h3 {
+            font-size: 1.1rem;
+            color: #1a3c5c;
+            margin-bottom: 12px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+        .basemap-tip {
+            font-size: 0.7rem;
+            color: #999;
+            text-align: center;
+            margin-top: 12px;
+        }
+        /* 微件样式微调 */
+        .esri-scale-bar {
+            background: rgba(255,255,255,0.85);
+            padding: 4px 8px;
+            border-radius: 4px;
+        }
+        .esri-legend {
+            background: rgba(255,255,255,0.9);
+            border-radius: 8px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .esri-search {
+            width: 280px;
+        }
+        .esri-layer-list {
+            width: 260px;
+            max-height: 400px;
+            background: white;
+            border-radius: 8px;
+        }
+        .esri-basemap-gallery {
+            width: 100%;
+            max-height: 350px;
+            overflow-y: auto;
+        }
+        .esri-basemap-gallery__item {
+            margin-bottom: 8px;
+            border-radius: 6px;
+            transition: transform 0.2s;
+        }
+        .esri-basemap-gallery__item:hover {
+            transform: scale(1.02);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        }
+        /* 响应式 */
+        @media (max-width: 768px) {
+            .main-content { flex-direction: column; }
+            .map-container { flex: 2; }
+            .basemap-container { flex: 0.8; border-left: none; border-top: 1px solid #e0e0e0; }
+        }
+        /* 加载提示 */
+        .loading-tip {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(0,0,0,0.7);
+            color: white;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            z-index: 1000;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+<div class="app-container">
+    <header class="app-header">
+        <h1>🗺️主要城市人口数量</h1>
+        <p></p>
+    </header>
+    <div class="main-content">
+        <main class="map-container">
+            <div id="viewDiv"></div>
+        </main>
+        <aside class="basemap-container">
+            <h3>底图库</h3>
+            <div id="basemapGalleryDiv"></div>
+            <p class="basemap-tip">点击底图库中的任意底图即可切换</p>
+            <p class="basemap-tip" style="margin-top: 8px;">点击右上角图层列表图标可管理图层</p>
+        </aside>
+    </div>
+</div>
+
+<script src="https://js.arcgis.com/4.27/"></script>
+<script>
+    require([
+        "esri/Map",
+        "esri/views/MapView",
+        "esri/layers/FeatureLayer",
+        "esri/widgets/ScaleBar",
+        "esri/widgets/Legend",
+        "esri/widgets/Search",
+        "esri/widgets/LayerList",
+        "esri/widgets/BasemapGallery",
+        "esri/widgets/Expand"
+    ], function(Map, MapView, FeatureLayer, ScaleBar, Legend, Search, LayerList, BasemapGallery, Expand) {
+
+        // 1. 创建地图，初始底图使用 ArcGIS 街道图（无需密钥）
+        const map = new Map({
+            basemap: "streets-vector"   // 可选：topo-vector, satellite, gray, dark-gray, oceans, terrain
+        });
+
+        // 2. 添加 Geosceneonline 公开专题图层（世界人口密度，无需密钥）
+        const populationLayer = new FeatureLayer({
+            url: "https://services.arcgis.com/P3ePLMYs2RVChkJx/ArcGIS/rest/services/World_Population_Density_2020/FeatureServer/0",
+            title: "世界人口密度",
+            opacity: 0.7,
+            visible: true
+        });
+        // 可选附加图层：世界主要城市
+        const citiesLayer = new FeatureLayer({
+            url: "https://services.arcgis.com/P3ePLMYs2RVChkJx/ArcGIS/rest/services/World_Cities/FeatureServer/0",
+            title: "世界主要城市",
+            opacity: 0.9,
+            visible: true
+        });
+        map.add(populationLayer);
+        map.add(citiesLayer);
+
+        // 3. 创建地图视图（初始视野为中国东部）
+        const view = new MapView({
+            container: "viewDiv",
+            map: map,
+            center: [118.7674, 31.8734],   // 经度,纬度
+            zoom: 5,
+            padding: { top: 0, left: 0, right: 0, bottom: 0 }
+        });
+
+        // 4. 添加比例尺微件（底部左下）
+        const scaleBar = new ScaleBar({
+            view: view,
+            unit: "metric",
+            style: "ruler"
+        });
+        view.ui.add(scaleBar, "bottom-left");
+
+        // 5. 添加图例微件（右上，悬浮）
+        const legend = new Legend({
+            view: view,
+            layerInfos: [
+                { layer: populationLayer, title: "人口密度" },
+                { layer: citiesLayer, title: "主要城市" }
+            ]
+        });
+        view.ui.add(legend, "top-right");
+
+        // 6. 添加搜索框（左上）
+        const searchWidget = new Search({
+            view: view,
+            includeDefaultSources: true,   // 使用 ArcGIS 在线地理编码服务（无需密钥）
+            locationEnabled: true,
+            maxResults: 6,
+            minSuggestCharacters: 2
+        });
+        view.ui.add(searchWidget, "top-left");
+
+        // 7. 添加图层列表（图层控制），包装在 Expand 按钮中（右上）
+        const layerList = new LayerList({
+            view: view,
+            listItemCreatedFunction: function(event) {
+                // 为每个图层显示图例面板
+                const item = event.item;
+                if (item.layer.type === "feature") {
+                    item.panel = {
+                        content: "legend",
+                        open: true
+                    };
+                }
+            }
+        });
+        const layerListExpand = new Expand({
+            view: view,
+            content: layerList,
+            expandIconClass: "esri-icon-layer-list",
+            expanded: false,
+            expandTooltip: "图层列表"
+        });
+        view.ui.add(layerListExpand, "top-right");
+
+        // 8. 底图库微件（放入右侧 aside 区域）
+        const basemapGallery = new BasemapGallery({
+            view: view,
+            source: {
+                // 使用 ArcGIS Online 公开底图库（无需密钥）
+                portal: { url: "https://www.arcgis.com" }
+            }
+        });
+        const galleryContainer = document.getElementById("basemapGalleryDiv");
+        if (galleryContainer) {
+            basemapGallery.container = galleryContainer;
+            basemapGallery.startup();
+        }
+
+        // 9. 添加加载完成提示
+        view.when(function() {
+            console.log("地图加载成功！");
+            const tip = document.createElement("div");
+            tip.className = "loading-tip";
+            tip.textContent = "✓ 地图已加载 | 包含2个专题图层 | 可切换底图";
+            view.container.appendChild(tip);
+            setTimeout(() => tip.remove(), 4000);
+        }).catch(function(error) {
+            console.error("地图加载失败：", error);
+            const errTip = document.createElement("div");
+            errTip.className = "loading-tip";
+            errTip.style.background = "rgba(220,53,69,0.9)";
+            errTip.textContent = "❌ 地图加载失败，请检查网络或控制台错误";
+            view.container.appendChild(errTip);
+        });
+    });
+</script>
+</body>
+</html>
